@@ -68,7 +68,7 @@ const (
 )
 
 // Notify implements the Notifier interface.
-func (n *Notifier) Notify(ctx context.Context, as ...*types.Alert) (bool, error) {
+func (n *Notifier) Notify(ctx context.Context, as ...*types.AlertSnapshot) (bool, error) {
 	var err error
 	var (
 		data   = notify.GetTemplateData(ctx, n.tmpl, as, n.logger)
@@ -111,7 +111,7 @@ func (n *Notifier) Notify(ctx context.Context, as ...*types.Alert) (bool, error)
 }
 
 // Create the JSON payload to be sent to the VictorOps API.
-func (n *Notifier) createVictorOpsPayload(ctx context.Context, as ...*types.Alert) (*bytes.Buffer, error) {
+func (n *Notifier) createVictorOpsPayload(ctx context.Context, as ...*types.AlertSnapshot) (*bytes.Buffer, error) {
 	victorOpsAllowedEvents := map[string]bool{
 		"INFO":     true,
 		"WARNING":  true,
@@ -123,13 +123,8 @@ func (n *Notifier) createVictorOpsPayload(ctx context.Context, as ...*types.Aler
 		return nil, err
 	}
 
-	now, err := notify.ExtractNow(ctx)
-	if err != nil {
-		return nil, err
-	}
-
 	var (
-		alerts = types.Alerts(as...)
+		alerts = types.Snapshot(as...)
 		data   = notify.GetTemplateData(ctx, n.tmpl, as, n.logger)
 		tmpl   = notify.TmplText(n.tmpl, data, &err)
 
@@ -137,11 +132,11 @@ func (n *Notifier) createVictorOpsPayload(ctx context.Context, as ...*types.Aler
 		stateMessage = tmpl(n.conf.StateMessage)
 	)
 
-	if alerts.StatusAt(now) == model.AlertFiring && !victorOpsAllowedEvents[messageType] {
+	if alerts.Status() == model.AlertFiring && !victorOpsAllowedEvents[messageType] {
 		messageType = victorOpsEventTrigger
 	}
 
-	if alerts.StatusAt(now) == model.AlertResolved {
+	if alerts.Status() == model.AlertResolved {
 		messageType = victorOpsEventResolve
 	}
 

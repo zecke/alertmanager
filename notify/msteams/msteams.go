@@ -80,13 +80,8 @@ func New(c *config.MSTeamsConfig, t *template.Template, l log.Logger, httpOpts .
 	return n, nil
 }
 
-func (n *Notifier) Notify(ctx context.Context, as ...*types.Alert) (bool, error) {
+func (n *Notifier) Notify(ctx context.Context, as ...*types.AlertSnapshot) (bool, error) {
 	key, err := notify.ExtractGroupKey(ctx)
-	if err != nil {
-		return false, err
-	}
-
-	now, err := notify.ExtractNow(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -112,9 +107,9 @@ func (n *Notifier) Notify(ctx context.Context, as ...*types.Alert) (bool, error)
 		return false, err
 	}
 
-	alerts := types.Alerts(as...)
+	alerts := types.Snapshot(as...)
 	color := colorGrey
-	switch alerts.StatusAt(now) {
+	switch alerts.Status() {
 	case model.AlertFiring:
 		color = colorRed
 	case model.AlertResolved:

@@ -190,7 +190,7 @@ func ExtractNow(ctx context.Context) (time.Time, error) {
 }
 
 // GetTemplateData creates the template data from the context and the alerts.
-func GetTemplateData(ctx context.Context, tmpl *template.Template, alerts []*types.Alert, l log.Logger) *template.Data {
+func GetTemplateData(ctx context.Context, tmpl *template.Template, alerts []*types.AlertSnapshot, l log.Logger) *template.Data {
 	recv, ok := ReceiverName(ctx)
 	if !ok {
 		level.Error(l).Log("msg", "Missing receiver")

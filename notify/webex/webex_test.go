@@ -112,8 +112,8 @@ func TestWebexTemplating(t *testing.T) {
 			defer cancel()
 			ctx = notify.WithGroupKey(ctx, "1")
 
-			ok, err := notifierWebex.Notify(ctx, []*types.Alert{
-				{
+			ok, err := notifierWebex.Notify(ctx, []*types.AlertSnapshot{
+				types.NewAlertSnapshot(&types.Alert{
 					Alert: model.Alert{
 						Labels: model.LabelSet{
 							"lbl1": "val1",
@@ -122,8 +122,8 @@ func TestWebexTemplating(t *testing.T) {
 						StartsAt: time.Now(),
 						EndsAt:   time.Now().Add(time.Hour),
 					},
-				},
-				{
+				}, time.Now()),
+				types.NewAlertSnapshot(&types.Alert{
 					Alert: model.Alert{
 						Labels: model.LabelSet{
 							"lbl1": "val1",
@@ -132,7 +132,7 @@ func TestWebexTemplating(t *testing.T) {
 						StartsAt: time.Now(),
 						EndsAt:   time.Now().Add(time.Hour),
 					},
-				},
+				}, time.Now()),
 			}...)
 
 			if tt.errMsg == "" {

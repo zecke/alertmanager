@@ -147,8 +147,8 @@ func TestTelegramNotify(t *testing.T) {
 			defer cancel()
 			ctx = notify.WithGroupKey(ctx, "1")
 
-			retry, err := notifier.Notify(ctx, []*types.Alert{
-				{
+			retry, err := notifier.Notify(ctx, []*types.AlertSnapshot{
+				types.NewAlertSnapshot(&types.Alert{
 					Alert: model.Alert{
 						Labels: model.LabelSet{
 							"lbl1": "val1",
@@ -157,7 +157,7 @@ func TestTelegramNotify(t *testing.T) {
 						StartsAt: time.Now(),
 						EndsAt:   time.Now().Add(time.Hour),
 					},
-				},
+				}, time.Now()),
 			}...)
 
 			require.False(t, retry)

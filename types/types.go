@@ -304,6 +304,70 @@ type Alert struct {
 	Timeout   bool
 }
 
+type AlertSnapshot struct {
+	alert Alert
+	ref   time.Time
+}
+
+func NewAlertSnapshot(a *Alert, ref time.Time) *AlertSnapshot {
+	return &AlertSnapshot{
+		alert: *a,
+		ref:   ref,
+	}
+}
+
+func (a *AlertSnapshot) UpdatedAt() time.Time {
+	return a.alert.UpdatedAt
+}
+
+func (a *AlertSnapshot) Name() string {
+	return a.alert.Name()
+}
+
+func (a *AlertSnapshot) Labels() model.LabelSet {
+	return a.alert.Labels
+}
+
+func (a *AlertSnapshot) Annotations() model.LabelSet {
+	return a.alert.Annotations
+}
+
+func (a *AlertSnapshot) StartsAt() time.Time {
+	return a.alert.StartsAt
+}
+
+func (a *AlertSnapshot) EndsAt() time.Time {
+	return a.alert.EndsAt
+}
+
+func (a *AlertSnapshot) GeneratorURL() string {
+	return a.alert.GeneratorURL
+}
+
+func (a *AlertSnapshot) Fingerprint() model.Fingerprint {
+	return a.alert.Fingerprint()
+}
+
+func (a *AlertSnapshot) String() string {
+	return a.alert.String()
+}
+
+func (a *AlertSnapshot) Resolved() bool {
+	return a.alert.ResolvedAt(a.ref)
+}
+
+func (a *AlertSnapshot) Status() model.AlertStatus {
+	return a.alert.StatusAt(a.ref)
+}
+
+func (a *AlertSnapshot) Alert() Alert {
+	return a.alert
+}
+
+func (a *AlertSnapshot) SnapshotTime() time.Time {
+	return a.ref
+}
+
 func validateLs(ls model.LabelSet) error {
 	for ln, lv := range ls {
 		if !compat.IsValidLabelName(ln) {
@@ -362,6 +426,46 @@ func (as AlertSlice) Less(i, j int) bool {
 }
 func (as AlertSlice) Swap(i, j int) { as[i], as[j] = as[j], as[i] }
 func (as AlertSlice) Len() int      { return len(as) }
+
+func (as AlertsSnapshot) Less(i, j int) bool {
+	// Look at labels.job, then labels.instance.
+	for _, overrideKey := range [...]model.LabelName{"job", "instance"} {
+		iVal, iOk := as[i].Labels()[overrideKey]
+		jVal, jOk := as[j].Labels()[overrideKey]
+		if !iOk && !jOk {
+			continue
+		}
+		if !iOk {
+			return false
+		}
+		if !jOk {
+			return true
+		}
+		if iVal != jVal {
+			return iVal < jVal
+		}
+	}
+	return as[i].Labels().Before(as[j].Labels())
+}
+func (as AlertsSnapshot) Swap(i, j int) { as[i], as[j] = as[j], as[i] }
+func (as AlertsSnapshot) Len() int      { return len(as) }
+
+type AlertsSnapshot []*AlertSnapshot
+
+func (as AlertsSnapshot) Status() model.AlertStatus {
+	for _, a := range as {
+		if !a.Resolved() {
+			return model.AlertFiring
+		}
+	}
+	return model.AlertResolved
+}
+
+func Snapshot(alerts ...*AlertSnapshot) AlertsSnapshot {
+	res := make(AlertsSnapshot, 0, len(alerts))
+	res = append(res, alerts...)
+	return res
+}
 
 // Alerts turns a sequence of internal alerts into a list of
 // exposable model.Alert structures.

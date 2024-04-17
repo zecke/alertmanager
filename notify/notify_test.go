@@ -44,15 +44,15 @@ func (s sendResolved) SendResolved() bool {
 	return bool(s)
 }
 
-type notifierFunc func(ctx context.Context, alerts ...*types.Alert) (bool, error)
+type notifierFunc func(ctx context.Context, alerts ...*types.AlertSnapshot) (bool, error)
 
-func (f notifierFunc) Notify(ctx context.Context, alerts ...*types.Alert) (bool, error) {
+func (f notifierFunc) Notify(ctx context.Context, alerts ...*types.AlertSnapshot) (bool, error) {
 	return f(ctx, alerts...)
 }
 
 type failStage struct{}
 
-func (s failStage) Exec(ctx context.Context, l log.Logger, as ...*types.Alert) (context.Context, []*types.Alert, error) {
+func (s failStage) Exec(ctx context.Context, l log.Logger, as ...*types.AlertSnapshot) (context.Context, []*types.AlertSnapshot, error) {
 	return ctx, nil, fmt.Errorf("some error")
 }
 
@@ -218,7 +218,7 @@ func TestDedupStage(t *testing.T) {
 	i := 0
 	now := utcNow()
 	s := &DedupStage{
-		hash: func(a *types.Alert) uint64 {
+		hash: func(a *types.AlertSnapshot) uint64 {
 			res := uint64(i)
 			i++
 			return res
@@ -237,15 +237,11 @@ func TestDedupStage(t *testing.T) {
 	ctx = WithGroupKey(ctx, "1")
 
 	_, _, err = s.Exec(ctx, log.NewNopLogger())
-	require.EqualError(t, err, "now missing")
-	ctx = WithNow(ctx, time.Now())
-
-	_, _, err = s.Exec(ctx, log.NewNopLogger())
 	require.EqualError(t, err, "repeat interval missing")
 
 	ctx = WithRepeatInterval(ctx, time.Hour)
 
-	alerts := []*types.Alert{{}, {}, {}}
+	alerts := []*types.AlertSnapshot{{}, {}, {}}
 
 	// Must catch notification log query errors.
 	s.nflog = &testNflog{
@@ -305,13 +301,13 @@ func TestDedupStage(t *testing.T) {
 
 func TestMultiStage(t *testing.T) {
 	var (
-		alerts1 = []*types.Alert{{}}
-		alerts2 = []*types.Alert{{}, {}}
-		alerts3 = []*types.Alert{{}, {}, {}}
+		alerts1 = []*types.AlertSnapshot{{}}
+		alerts2 = []*types.AlertSnapshot{{}, {}}
+		alerts3 = []*types.AlertSnapshot{{}, {}, {}}
 	)
 
 	stage := MultiStage{
-		StageFunc(func(ctx context.Context, l log.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
+		StageFunc(func(ctx context.Context, l log.Logger, alerts ...*types.AlertSnapshot) (context.Context, []*types.AlertSnapshot, error) {
 			if !reflect.DeepEqual(alerts, alerts1) {
 				t.Fatal("Input not equal to input of MultiStage")
 			}
@@ -319,7 +315,7 @@ func TestMultiStage(t *testing.T) {
 			ctx = context.WithValue(ctx, "key", "value")
 			return ctx, alerts2, nil
 		}),
-		StageFunc(func(ctx context.Context, l log.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
+		StageFunc(func(ctx context.Context, l log.Logger, alerts ...*types.AlertSnapshot) (context.Context, []*types.AlertSnapshot, error) {
 			if !reflect.DeepEqual(alerts, alerts2) {
 				t.Fatal("Input not equal to output of previous stage")
 			}
@@ -356,12 +352,12 @@ func TestMultiStageFailure(t *testing.T) {
 
 func TestRoutingStage(t *testing.T) {
 	var (
-		alerts1 = []*types.Alert{{}}
-		alerts2 = []*types.Alert{{}, {}}
+		alerts1 = []*types.AlertSnapshot{{}}
+		alerts2 = []*types.AlertSnapshot{{}, {}}
 	)
 
 	stage := RoutingStage{
-		"name": StageFunc(func(ctx context.Context, l log.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
+		"name": StageFunc(func(ctx context.Context, l log.Logger, alerts ...*types.AlertSnapshot) (context.Context, []*types.AlertSnapshot, error) {
 			if !reflect.DeepEqual(alerts, alerts1) {
 				t.Fatal("Input not equal to input of RoutingStage")
 			}
@@ -384,9 +380,9 @@ func TestRoutingStage(t *testing.T) {
 
 func TestRetryStageWithError(t *testing.T) {
 	fail, retry := true, true
-	sent := []*types.Alert{}
+	sent := []*types.AlertSnapshot{}
 	i := Integration{
-		notifier: notifierFunc(func(ctx context.Context, alerts ...*types.Alert) (bool, error) {
+		notifier: notifierFunc(func(ctx context.Context, alerts ...*types.AlertSnapshot) (bool, error) {
 			if fail {
 				fail = false
 				return retry, errors.New("fail to deliver notification")
@@ -398,12 +394,12 @@ func TestRetryStageWithError(t *testing.T) {
 	}
 	r := NewRetryStage(i, "", NewMetrics(prometheus.NewRegistry(), featurecontrol.NoopFlags{}))
 
-	alerts := []*types.Alert{
-		{
+	alerts := []*types.AlertSnapshot{
+		types.NewAlertSnapshot(&types.Alert{
 			Alert: model.Alert{
 				EndsAt: time.Now().Add(time.Hour),
 			},
-		},
+		}, time.Now()),
 	}
 
 	ctx := context.Background()
@@ -442,7 +438,7 @@ func TestRetryStageWithErrorCode(t *testing.T) {
 		testData := testData
 		i := Integration{
 			name: "test",
-			notifier: notifierFunc(func(ctx context.Context, alerts ...*types.Alert) (bool, error) {
+			notifier: notifierFunc(func(ctx context.Context, alerts ...*types.AlertSnapshot) (bool, error) {
 				if !testData.isNewErrorWithReason {
 					return retry, errors.New("fail to deliver notification")
 				}
@@ -452,12 +448,12 @@ func TestRetryStageWithErrorCode(t *testing.T) {
 		}
 		r := NewRetryStage(i, "", NewMetrics(prometheus.NewRegistry(), featurecontrol.NoopFlags{}))
 
-		alerts := []*types.Alert{
-			{
+		alerts := []*types.AlertSnapshot{
+			types.NewAlertSnapshot(&types.Alert{
 				Alert: model.Alert{
 					EndsAt: time.Now().Add(time.Hour),
 				},
-			},
+			}, time.Now()),
 		}
 
 		ctx := context.Background()
@@ -480,7 +476,7 @@ func TestRetryStageWithContextCanceled(t *testing.T) {
 
 	i := Integration{
 		name: "test",
-		notifier: notifierFunc(func(ctx context.Context, alerts ...*types.Alert) (bool, error) {
+		notifier: notifierFunc(func(ctx context.Context, alerts ...*types.AlertSnapshot) (bool, error) {
 			cancel()
 			return true, errors.New("request failed: context canceled")
 		}),
@@ -488,12 +484,12 @@ func TestRetryStageWithContextCanceled(t *testing.T) {
 	}
 	r := NewRetryStage(i, "", NewMetrics(prometheus.NewRegistry(), featurecontrol.NoopFlags{}))
 
-	alerts := []*types.Alert{
-		{
+	alerts := []*types.AlertSnapshot{
+		types.NewAlertSnapshot(&types.Alert{
 			Alert: model.Alert{
 				EndsAt: time.Now().Add(time.Hour),
 			},
-		},
+		}, time.Now()),
 	}
 
 	ctx = WithFiringAlerts(ctx, []uint64{0})
@@ -510,9 +506,9 @@ func TestRetryStageWithContextCanceled(t *testing.T) {
 }
 
 func TestRetryStageNoResolved(t *testing.T) {
-	sent := []*types.Alert{}
+	sent := []*types.AlertSnapshot{}
 	i := Integration{
-		notifier: notifierFunc(func(ctx context.Context, alerts ...*types.Alert) (bool, error) {
+		notifier: notifierFunc(func(ctx context.Context, alerts ...*types.AlertSnapshot) (bool, error) {
 			sent = append(sent, alerts...)
 			return false, nil
 		}),
@@ -520,29 +516,22 @@ func TestRetryStageNoResolved(t *testing.T) {
 	}
 	r := NewRetryStage(i, "", NewMetrics(prometheus.NewRegistry(), featurecontrol.NoopFlags{}))
 
-	alerts := []*types.Alert{
-		{
+	alerts := []*types.AlertSnapshot{
+		types.NewAlertSnapshot(&types.Alert{
 			Alert: model.Alert{
 				EndsAt: time.Now().Add(-time.Hour),
 			},
-		},
-		{
+		}, time.Now()),
+		types.NewAlertSnapshot(&types.Alert{
 			Alert: model.Alert{
 				EndsAt: time.Now().Add(time.Hour),
 			},
-		},
+		}, time.Now()),
 	}
 
 	ctx := context.Background()
 
 	resctx, res, err := r.Exec(ctx, log.NewNopLogger(), alerts...)
-	require.EqualError(t, err, "now missing")
-	require.Nil(t, res)
-	require.NotNil(t, resctx)
-
-	ctx = WithNow(ctx, time.Now())
-
-	resctx, res, err = r.Exec(ctx, log.NewNopLogger(), alerts...)
 	require.EqualError(t, err, "firing alerts missing")
 	require.Nil(t, res)
 	require.NotNil(t, resctx)
@@ -552,25 +541,27 @@ func TestRetryStageNoResolved(t *testing.T) {
 	resctx, res, err = r.Exec(ctx, log.NewNopLogger(), alerts...)
 	require.NoError(t, err)
 	require.Equal(t, alerts, res)
-	require.Equal(t, []*types.Alert{alerts[1]}, sent)
+	require.Equal(t, []*types.AlertSnapshot{alerts[1]}, sent)
 	require.NotNil(t, resctx)
 
 	// All alerts are resolved.
 	sent = sent[:0]
 	ctx = WithFiringAlerts(ctx, []uint64{})
-	alerts[1].Alert.EndsAt = time.Now().Add(-time.Hour)
+	alert := alerts[1].Alert()
+	alert.EndsAt = time.Now().Add(-time.Hour)
+	alerts[1] = types.NewAlertSnapshot(&alert, time.Now())
 
 	resctx, res, err = r.Exec(ctx, log.NewNopLogger(), alerts...)
 	require.NoError(t, err)
 	require.Equal(t, alerts, res)
-	require.Equal(t, []*types.Alert{}, sent)
+	require.Equal(t, []*types.AlertSnapshot{}, sent)
 	require.NotNil(t, resctx)
 }
 
 func TestRetryStageSendResolved(t *testing.T) {
-	sent := []*types.Alert{}
+	sent := []*types.AlertSnapshot{}
 	i := Integration{
-		notifier: notifierFunc(func(ctx context.Context, alerts ...*types.Alert) (bool, error) {
+		notifier: notifierFunc(func(ctx context.Context, alerts ...*types.AlertSnapshot) (bool, error) {
 			sent = append(sent, alerts...)
 			return false, nil
 		}),
@@ -578,17 +569,17 @@ func TestRetryStageSendResolved(t *testing.T) {
 	}
 	r := NewRetryStage(i, "", NewMetrics(prometheus.NewRegistry(), featurecontrol.NoopFlags{}))
 
-	alerts := []*types.Alert{
-		{
+	alerts := []*types.AlertSnapshot{
+		types.NewAlertSnapshot(&types.Alert{
 			Alert: model.Alert{
 				EndsAt: time.Now().Add(-time.Hour),
 			},
-		},
-		{
+		}, time.Now()),
+		types.NewAlertSnapshot(&types.Alert{
 			Alert: model.Alert{
 				EndsAt: time.Now().Add(time.Hour),
 			},
-		},
+		}, time.Now()),
 	}
 
 	ctx := context.Background()
@@ -604,7 +595,9 @@ func TestRetryStageSendResolved(t *testing.T) {
 	// All alerts are resolved.
 	sent = sent[:0]
 	ctx = WithFiringAlerts(ctx, []uint64{})
-	alerts[1].Alert.EndsAt = time.Now().Add(-time.Hour)
+	alert := alerts[1].Alert()
+	alert.EndsAt = time.Now().Add(-time.Hour)
+	alerts[1] = types.NewAlertSnapshot(&alert, time.Now())
 
 	resctx, res, err = r.Exec(ctx, log.NewNopLogger(), alerts...)
 	require.NoError(t, err)
@@ -619,7 +612,7 @@ func TestSetNotifiesStage(t *testing.T) {
 		recv:  &nflogpb.Receiver{GroupName: "test"},
 		nflog: tnflog,
 	}
-	alerts := []*types.Alert{{}, {}, {}}
+	alerts := []*types.AlertSnapshot{{}, {}, {}}
 	ctx := context.Background()
 
 	resctx, res, err := s.Exec(ctx, log.NewNopLogger(), alerts...)
@@ -701,11 +694,11 @@ func TestMuteStage(t *testing.T) {
 		{"not": "muted"},
 	}
 
-	var inAlerts []*types.Alert
+	var inAlerts []*types.AlertSnapshot
 	for _, lset := range in {
-		inAlerts = append(inAlerts, &types.Alert{
+		inAlerts = append(inAlerts, types.NewAlertSnapshot(&types.Alert{
 			Alert: model.Alert{Labels: lset},
-		})
+		}, time.Now()))
 	}
 
 	_, alerts, err := stage.Exec(context.Background(), log.NewNopLogger(), inAlerts...)
@@ -715,7 +708,7 @@ func TestMuteStage(t *testing.T) {
 
 	var got []model.LabelSet
 	for _, a := range alerts {
-		got = append(got, a.Labels)
+		got = append(got, a.Labels())
 	}
 
 	if !reflect.DeepEqual(got, out) {
@@ -763,11 +756,11 @@ func TestMuteStageWithSilences(t *testing.T) {
 		{"not": "muted"},
 	}
 
-	var inAlerts []*types.Alert
+	var inAlerts []*types.AlertSnapshot
 	for _, lset := range in {
-		inAlerts = append(inAlerts, &types.Alert{
+		inAlerts = append(inAlerts, types.NewAlertSnapshot(&types.Alert{
 			Alert: model.Alert{Labels: lset},
-		})
+		}, time.Now()))
 	}
 
 	// Set the second alert as previously silenced with an old version
@@ -781,7 +774,7 @@ func TestMuteStageWithSilences(t *testing.T) {
 
 	var got []model.LabelSet
 	for _, a := range alerts {
-		got = append(got, a.Labels)
+		got = append(got, a.Labels())
 	}
 
 	if !reflect.DeepEqual(got, out) {
@@ -800,7 +793,7 @@ func TestMuteStageWithSilences(t *testing.T) {
 
 	got = got[:0]
 	for _, a := range alerts {
-		got = append(got, a.Labels)
+		got = append(got, a.Labels())
 	}
 
 	if !reflect.DeepEqual(got, out) {
@@ -823,7 +816,7 @@ func TestMuteStageWithSilences(t *testing.T) {
 	}
 	got = got[:0]
 	for _, a := range alerts {
-		got = append(got, a.Labels)
+		got = append(got, a.Labels())
 	}
 
 	if !reflect.DeepEqual(got, in) {
@@ -912,7 +905,7 @@ func TestTimeMuteStage(t *testing.T) {
 	metrics := NewMetrics(prometheus.NewRegistry(), featurecontrol.NoopFlags{})
 	stage := NewTimeMuteStage(intervener, metrics)
 
-	outAlerts := []*types.Alert{}
+	outAlerts := []*types.AlertSnapshot{}
 	nonMuteCount := 0
 	for _, tc := range cases {
 		now, err := time.Parse(time.RFC822Z, tc.fireTime)
@@ -924,7 +917,7 @@ func TestTimeMuteStage(t *testing.T) {
 			nonMuteCount++
 		}
 		a := model.Alert{Labels: tc.labels}
-		alerts := []*types.Alert{{Alert: a}}
+		alerts := []*types.AlertSnapshot{types.NewAlertSnapshot(&types.Alert{Alert: a}, time.Now())}
 		ctx := context.Background()
 		ctx = WithNow(ctx, now)
 		ctx = WithActiveTimeIntervals(ctx, []string{})
@@ -937,8 +930,8 @@ func TestTimeMuteStage(t *testing.T) {
 		outAlerts = append(outAlerts, out...)
 	}
 	for _, alert := range outAlerts {
-		if _, ok := alert.Alert.Labels["mute"]; ok {
-			t.Fatalf("Expected alert to be muted %+v", alert.Alert)
+		if _, ok := alert.Labels()["mute"]; ok {
+			t.Fatalf("Expected alert to be muted %+v", alert)
 		}
 	}
 	if len(outAlerts) != nonMuteCount {
@@ -1007,7 +1000,7 @@ func TestTimeActiveStage(t *testing.T) {
 	metrics := NewMetrics(prometheus.NewRegistry(), featurecontrol.NoopFlags{})
 	stage := NewTimeActiveStage(intervener, metrics)
 
-	outAlerts := []*types.Alert{}
+	outAlerts := []*types.AlertSnapshot{}
 	nonMuteCount := 0
 	for _, tc := range cases {
 		now, err := time.Parse(time.RFC822Z, tc.fireTime)
@@ -1019,7 +1012,7 @@ func TestTimeActiveStage(t *testing.T) {
 			nonMuteCount++
 		}
 		a := model.Alert{Labels: tc.labels}
-		alerts := []*types.Alert{{Alert: a}}
+		alerts := []*types.AlertSnapshot{types.NewAlertSnapshot(&types.Alert{Alert: a}, time.Now())}
 		ctx := context.Background()
 		ctx = WithNow(ctx, now)
 		ctx = WithActiveTimeIntervals(ctx, []string{"test"})
@@ -1032,8 +1025,8 @@ func TestTimeActiveStage(t *testing.T) {
 		outAlerts = append(outAlerts, out...)
 	}
 	for _, alert := range outAlerts {
-		if _, ok := alert.Alert.Labels["mute"]; ok {
-			t.Fatalf("Expected alert to be muted %+v", alert.Alert)
+		if _, ok := alert.Labels()["mute"]; ok {
+			t.Fatalf("Expected alert to be muted %+v", alert)
 		}
 	}
 	if len(outAlerts) != nonMuteCount {
@@ -1046,11 +1039,11 @@ func TestTimeActiveStage(t *testing.T) {
 }
 
 func BenchmarkHashAlert(b *testing.B) {
-	alert := &types.Alert{
+	alert := types.NewAlertSnapshot(&types.Alert{
 		Alert: model.Alert{
 			Labels: model.LabelSet{"foo": "the_first_value", "bar": "the_second_value", "another": "value"},
 		},
-	}
+	}, time.Now())
 	for i := 0; i < b.N; i++ {
 		hashAlert(alert)
 	}

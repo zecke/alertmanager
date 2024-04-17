@@ -299,7 +299,7 @@ func (d *Dispatcher) Stop() {
 // notifyFunc is a function that performs notification for the alert
 // with the given fingerprint. It aborts on context cancelation.
 // Returns false iff notifying failed.
-type notifyFunc func(context.Context, ...*types.Alert) bool
+type notifyFunc func(context.Context, ...*types.AlertSnapshot) bool
 
 // processAlert determines in which aggregation group the alert falls
 // and inserts it.
@@ -340,7 +340,7 @@ func (d *Dispatcher) processAlert(alert *types.Alert, route *Route) {
 	// alert is already there.
 	ag.insert(alert)
 
-	go ag.run(func(ctx context.Context, alerts ...*types.Alert) bool {
+	go ag.run(func(ctx context.Context, alerts ...*types.AlertSnapshot) bool {
 		_, _, err := d.stage.Exec(ctx, d.logger, alerts...)
 		if err != nil {
 			lvl := level.Error(d.logger)
@@ -504,11 +504,11 @@ func (ag *aggrGroup) flush(ctx context.Context, nf notifyFunc) {
 
 	var (
 		alerts      = ag.alerts.List()
-		alertsSlice = make(types.AlertSlice, 0, len(alerts))
+		alertsSlice = make(types.AlertsSnapshot, 0, len(alerts))
 	)
 	for _, alert := range alerts {
-		a := *alert
-		alertsSlice = append(alertsSlice, &a)
+		a := types.NewAlertSnapshot(alert, now)
+		alertsSlice = append(alertsSlice, a)
 	}
 	sort.Stable(alertsSlice)
 
@@ -525,7 +525,7 @@ func (ag *aggrGroup) flush(ctx context.Context, nf notifyFunc) {
 				level.Error(ag.logger).Log("msg", "failed to get alert", "err", err, "alert", a.String())
 				continue
 			}
-			if a.ResolvedAt(now) && got.UpdatedAt == a.UpdatedAt {
+			if a.Resolved() && got.UpdatedAt == a.UpdatedAt() {
 				if err := ag.alerts.Delete(fp); err != nil {
 					level.Error(ag.logger).Log("msg", "error on delete alert", "err", err, "alert", a.String())
 				}

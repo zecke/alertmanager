@@ -143,8 +143,8 @@ func AssertNotifyLeaksNoSecret(ctx context.Context, t *testing.T, n notify.Notif
 
 	ctx = notify.WithGroupKey(ctx, "1")
 	ctx = notify.WithNow(ctx, time.Now())
-	ok, err := n.Notify(ctx, []*types.Alert{
-		{
+	ok, err := n.Notify(ctx, []*types.AlertSnapshot{
+		types.NewAlertSnapshot(&types.Alert{
 			Alert: model.Alert{
 				Labels: model.LabelSet{
 					"lbl1": "val1",
@@ -152,7 +152,7 @@ func AssertNotifyLeaksNoSecret(ctx context.Context, t *testing.T, n notify.Notif
 				StartsAt: time.Now(),
 				EndsAt:   time.Now().Add(time.Hour),
 			},
-		},
+		}, time.Now()),
 	}...)
 
 	require.Error(t, err)

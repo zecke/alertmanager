@@ -342,10 +342,10 @@ func (as Alerts) Resolved() []Alert {
 }
 
 // Data assembles data for template expansion.
-func (t *Template) Data(recv string, groupLabels model.LabelSet, alerts ...*types.Alert) *Data {
+func (t *Template) Data(recv string, groupLabels model.LabelSet, alerts ...*types.AlertSnapshot) *Data {
 	data := &Data{
 		Receiver:          regexp.QuoteMeta(recv),
-		Status:            string(types.Alerts(alerts...).Status()),
+		Status:            string(types.Snapshot(alerts...).Status()),
 		Alerts:            make(Alerts, 0, len(alerts)),
 		GroupLabels:       KV{},
 		CommonLabels:      KV{},
@@ -355,20 +355,20 @@ func (t *Template) Data(recv string, groupLabels model.LabelSet, alerts ...*type
 
 	// The call to types.Alert is necessary to correctly resolve the internal
 	// representation to the user representation.
-	for _, a := range types.Alerts(alerts...) {
+	for _, a := range alerts {
 		alert := Alert{
 			Status:       string(a.Status()),
-			Labels:       make(KV, len(a.Labels)),
-			Annotations:  make(KV, len(a.Annotations)),
-			StartsAt:     a.StartsAt,
-			EndsAt:       a.EndsAt,
-			GeneratorURL: a.GeneratorURL,
+			Labels:       make(KV, len(a.Labels())),
+			Annotations:  make(KV, len(a.Annotations())),
+			StartsAt:     a.StartsAt(),
+			EndsAt:       a.EndsAt(),
+			GeneratorURL: a.GeneratorURL(),
 			Fingerprint:  a.Fingerprint().String(),
 		}
-		for k, v := range a.Labels {
+		for k, v := range a.Labels() {
 			alert.Labels[string(k)] = string(v)
 		}
-		for k, v := range a.Annotations {
+		for k, v := range a.Annotations() {
 			alert.Annotations[string(k)] = string(v)
 		}
 		data.Alerts = append(data.Alerts, alert)
@@ -380,20 +380,20 @@ func (t *Template) Data(recv string, groupLabels model.LabelSet, alerts ...*type
 
 	if len(alerts) >= 1 {
 		var (
-			commonLabels      = alerts[0].Labels.Clone()
-			commonAnnotations = alerts[0].Annotations.Clone()
+			commonLabels      = alerts[0].Labels().Clone()
+			commonAnnotations = alerts[0].Annotations().Clone()
 		)
 		for _, a := range alerts[1:] {
 			if len(commonLabels) == 0 && len(commonAnnotations) == 0 {
 				break
 			}
 			for ln, lv := range commonLabels {
-				if a.Labels[ln] != lv {
+				if a.Labels()[ln] != lv {
 					delete(commonLabels, ln)
 				}
 			}
 			for an, av := range commonAnnotations {
-				if a.Annotations[an] != av {
+				if a.Annotations()[an] != av {
 					delete(commonAnnotations, an)
 				}
 			}

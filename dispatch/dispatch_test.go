@@ -96,10 +96,10 @@ func TestAggrGroup(t *testing.T) {
 		last       = time.Now()
 		current    = time.Now()
 		lastCurMtx = &sync.Mutex{}
-		alertsCh   = make(chan types.AlertSlice)
+		alertsCh   = make(chan types.AlertsSnapshot)
 	)
 
-	ntfy := func(ctx context.Context, alerts ...*types.Alert) bool {
+	ntfy := func(ctx context.Context, alerts ...*types.AlertSnapshot) bool {
 		// Validate that the context is properly populated.
 		if _, ok := notify.Now(ctx); !ok {
 			t.Errorf("now missing")
@@ -123,18 +123,18 @@ func TestAggrGroup(t *testing.T) {
 		current = time.Now().Add(-time.Millisecond)
 		lastCurMtx.Unlock()
 
-		alertsCh <- types.AlertSlice(alerts)
+		alertsCh <- types.AlertsSnapshot(alerts)
 
 		return true
 	}
 
-	removeEndsAt := func(as types.AlertSlice) types.AlertSlice {
+	makeSnapshot := func(as types.AlertSlice, now time.Time) types.AlertsSnapshot {
+		res := make(types.AlertsSnapshot, len(as))
 		for i, a := range as {
 			ac := *a
-			ac.EndsAt = time.Time{}
-			as[i] = &ac
+			res[i] = types.NewAlertSnapshot(&ac, now)
 		}
-		return as
+		return res
 	}
 
 	// Test regular situation where we wait for group_wait to send out alerts.
@@ -154,12 +154,11 @@ func TestAggrGroup(t *testing.T) {
 		if s < opts.GroupWait {
 			t.Fatalf("received batch too early after %v", s)
 		}
-		exp := removeEndsAt(types.AlertSlice{a1})
+		exp := makeSnapshot(types.AlertSlice{a1}, batch[0].SnapshotTime())
 		sort.Sort(batch)
 
-		if !reflect.DeepEqual(batch, exp) {
-			t.Fatalf("expected alerts %v but got %v", exp, batch)
-		}
+		require.Equal(t, batch, exp)
+
 	}
 
 	for i := 0; i < 3; i++ {
@@ -177,7 +176,7 @@ func TestAggrGroup(t *testing.T) {
 			if s < opts.GroupInterval {
 				t.Fatalf("received batch too early after %v", s)
 			}
-			exp := removeEndsAt(types.AlertSlice{a1, a3})
+			exp := makeSnapshot(types.AlertSlice{a1, a3}, batch[0].SnapshotTime())
 			sort.Sort(batch)
 
 			if !reflect.DeepEqual(batch, exp) {
@@ -204,7 +203,7 @@ func TestAggrGroup(t *testing.T) {
 		t.Fatalf("expected immediate alert but received none")
 
 	case batch := <-alertsCh:
-		exp := removeEndsAt(types.AlertSlice{a1, a2})
+		exp := makeSnapshot(types.AlertSlice{a1, a2}, batch[0].SnapshotTime())
 		sort.Sort(batch)
 
 		if !reflect.DeepEqual(batch, exp) {
@@ -227,7 +226,7 @@ func TestAggrGroup(t *testing.T) {
 			if s < opts.GroupInterval {
 				t.Fatalf("received batch too early after %v", s)
 			}
-			exp := removeEndsAt(types.AlertSlice{a1, a2, a3})
+			exp := makeSnapshot(types.AlertSlice{a1, a2, a3}, batch[0].SnapshotTime())
 			sort.Sort(batch)
 
 			if !reflect.DeepEqual(batch, exp) {
@@ -257,10 +256,9 @@ func TestAggrGroup(t *testing.T) {
 		}
 		sort.Sort(batch)
 
-		if !reflect.DeepEqual(batch, resolved) {
-			t.Fatalf("expected alerts %v but got %v", resolved, batch)
-		}
+		exp := makeSnapshot(resolved, batch[0].SnapshotTime())
 
+		require.Equal(t, batch, exp)
 		if !ag.empty() {
 			t.Fatalf("Expected aggregation group to be empty after resolving alerts: %v", ag)
 		}
@@ -373,7 +371,7 @@ route:
 	defer alerts.Close()
 
 	timeout := func(d time.Duration) time.Duration { return time.Duration(0) }
-	recorder := &recordStage{alerts: make(map[string]map[model.Fingerprint]*types.Alert)}
+	recorder := &recordStage{alerts: make(map[string]map[model.Fingerprint]*types.AlertSnapshot)}
 	dispatcher := NewDispatcher(alerts, route, recorder, marker, timeout, nil, logger, NewDispatcherMetrics(false, prometheus.NewRegistry()))
 	go dispatcher.Run()
 	defer dispatcher.Stop()
@@ -511,7 +509,7 @@ route:
 	defer alerts.Close()
 
 	timeout := func(d time.Duration) time.Duration { return time.Duration(0) }
-	recorder := &recordStage{alerts: make(map[string]map[model.Fingerprint]*types.Alert)}
+	recorder := &recordStage{alerts: make(map[string]map[model.Fingerprint]*types.AlertSnapshot)}
 	lim := limits{groups: 6}
 	m := NewDispatcherMetrics(true, prometheus.NewRegistry())
 	dispatcher := NewDispatcher(alerts, route, recorder, marker, timeout, lim, logger, m)
@@ -570,13 +568,13 @@ route:
 
 type recordStage struct {
 	mtx    sync.RWMutex
-	alerts map[string]map[model.Fingerprint]*types.Alert
+	alerts map[string]map[model.Fingerprint]*types.AlertSnapshot
 }
 
-func (r *recordStage) Alerts() []*types.Alert {
+func (r *recordStage) Alerts() []*types.AlertSnapshot {
 	r.mtx.RLock()
 	defer r.mtx.RUnlock()
-	alerts := make([]*types.Alert, 0)
+	alerts := make([]*types.AlertSnapshot, 0)
 	for k := range r.alerts {
 		for _, a := range r.alerts[k] {
 			alerts = append(alerts, a)
@@ -585,7 +583,7 @@ func (r *recordStage) Alerts() []*types.Alert {
 	return alerts
 }
 
-func (r *recordStage) Exec(ctx context.Context, l log.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
+func (r *recordStage) Exec(ctx context.Context, l log.Logger, alerts ...*types.AlertSnapshot) (context.Context, []*types.AlertSnapshot, error) {
 	r.mtx.Lock()
 	defer r.mtx.Unlock()
 	gk, ok := notify.GroupKey(ctx)
@@ -593,7 +591,7 @@ func (r *recordStage) Exec(ctx context.Context, l log.Logger, alerts ...*types.A
 		panic("GroupKey not present!")
 	}
 	if _, ok := r.alerts[gk]; !ok {
-		r.alerts[gk] = make(map[model.Fingerprint]*types.Alert)
+		r.alerts[gk] = make(map[model.Fingerprint]*types.AlertSnapshot)
 	}
 	for _, a := range alerts {
 		r.alerts[gk][a.Fingerprint()] = a
@@ -659,7 +657,7 @@ func TestDispatcherRaceOnFirstAlertNotDeliveredWhenGroupWaitIsZero(t *testing.T)
 	}
 
 	timeout := func(d time.Duration) time.Duration { return d }
-	recorder := &recordStage{alerts: make(map[string]map[model.Fingerprint]*types.Alert)}
+	recorder := &recordStage{alerts: make(map[string]map[model.Fingerprint]*types.AlertSnapshot)}
 	dispatcher := NewDispatcher(alerts, route, recorder, marker, timeout, nil, logger, NewDispatcherMetrics(false, prometheus.NewRegistry()))
 	go dispatcher.Run()
 	defer dispatcher.Stop()

@@ -119,8 +119,8 @@ func TestMSTeamsTemplating(t *testing.T) {
 			ctx = notify.WithGroupKey(ctx, "1")
 			ctx = notify.WithNow(ctx, time.Now())
 
-			ok, err := pd.Notify(ctx, []*types.Alert{
-				{
+			ok, err := pd.Notify(ctx, []*types.AlertSnapshot{
+				types.NewAlertSnapshot(&types.Alert{
 					Alert: model.Alert{
 						Labels: model.LabelSet{
 							"lbl1": "val1",
@@ -128,7 +128,7 @@ func TestMSTeamsTemplating(t *testing.T) {
 						StartsAt: time.Now(),
 						EndsAt:   time.Now().Add(time.Hour),
 					},
-				},
+				}, time.Now()),
 			}...)
 			if tc.errMsg == "" {
 				require.NoError(t, err)
@@ -178,12 +178,12 @@ func TestNotifier_Notify_WithReason(t *testing.T) {
 			ctx = notify.WithGroupKey(ctx, "1")
 			ctx = notify.WithNow(ctx, time.Now())
 
-			alert1 := &types.Alert{
+			alert1 := types.NewAlertSnapshot(&types.Alert{
 				Alert: model.Alert{
 					StartsAt: time.Now(),
 					EndsAt:   time.Now().Add(time.Hour),
 				},
-			}
+			}, time.Now())
 			_, err = notifier.Notify(ctx, alert1)
 			if tt.noError {
 				require.NoError(t, err)
