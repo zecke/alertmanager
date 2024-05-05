@@ -68,7 +68,7 @@ func (l *testNflog) Query(p ...nflog.QueryParam) ([]*nflogpb.Entry, error) {
 	return l.qres, l.qerr
 }
 
-func (l *testNflog) Log(r *nflogpb.Receiver, gkey string, firingAlerts, resolvedAlerts []uint64, expiry time.Duration) error {
+func (l *testNflog) Log(r *nflogpb.Receiver, gkey string, firingAlerts, resolvedAlerts []uint64, expiry time.Duration, dispatchTime time.Time) error {
 	return l.logFunc(r, gkey, firingAlerts, resolvedAlerts, expiry)
 }
 
@@ -210,7 +210,7 @@ func TestDedupStageNeedsUpdate(t *testing.T) {
 			now: func() time.Time { return now },
 			rs:  sendResolved(c.resolve),
 		}
-		res := s.needsUpdate(c.entry, c.firingAlerts, c.resolvedAlerts, c.repeat)
+		res := s.needsUpdate(c.entry, c.firingAlerts, c.resolvedAlerts, now, c.repeat, time.Second*0)
 		require.Equal(t, c.res, res)
 	}
 }
@@ -241,6 +241,16 @@ func TestDedupStage(t *testing.T) {
 	require.EqualError(t, err, "repeat interval missing")
 
 	ctx = WithRepeatInterval(ctx, time.Hour)
+
+	_, _, err = s.Exec(ctx, log.NewNopLogger())
+	require.EqualError(t, err, "group interval missing")
+
+	ctx = WithGroupInterval(ctx, time.Second*0)
+
+	_, _, err = s.Exec(ctx, log.NewNopLogger())
+	require.EqualError(t, err, "dispatch time missing")
+
+	ctx = WithNow(ctx, now)
 
 	alerts := []*types.Alert{{}, {}, {}}
 
@@ -629,6 +639,7 @@ func TestSetNotifiesStage(t *testing.T) {
 
 	ctx = WithResolvedAlerts(ctx, []uint64{})
 	ctx = WithRepeatInterval(ctx, time.Hour)
+	ctx = WithNow(ctx, time.Now())
 
 	tnflog.logFunc = func(r *nflogpb.Receiver, gkey string, firingAlerts, resolvedAlerts []uint64, expiry time.Duration) error {
 		require.Equal(t, s.recv, r)

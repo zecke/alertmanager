@@ -271,3 +271,46 @@ receivers:
 	require.EqualError(t, err, "exit status 1")
 	require.Equal(t, "amtool: error: Failed to parse labels: unexpected open or close brace: {foo=bar}\n\n", string(out))
 }
+
+func TestGroupingOnConfigReload(t *testing.T) {
+	t.Parallel()
+
+	conf := `
+route:
+  receiver: "default"
+  group_by: [alertname]
+  group_wait:      2s
+  group_interval:  1h
+  repeat_interval: 4h
+
+receivers:
+- name: "default"
+  webhook_configs:
+  - url: 'http://%s'
+    send_resolved: true
+`
+
+	at := NewAcceptanceTest(t, &AcceptanceOpts{
+		Tolerance: 150 * time.Millisecond,
+	})
+	co := at.Collector("webhook")
+	wh := NewWebhook(co)
+
+	amc := at.AlertmanagerCluster(fmt.Sprintf(conf, wh.Address()), 1)
+	am := amc.Members()[0]
+
+	alert1 := Alert("alertname", "test1", "tag", "one").Active(1, 400)
+	am.AddAlertsAt(false, 0, alert1)
+	co.Want(Between(1, 3), Alert("alertname", "test1", "tag", "one").Active(1))
+
+	alert2 := Alert("alertname", "test1", "tag", "two").Active(4, 402)
+	am.AddAlertsAt(false, 4, alert2)
+	co.Want(Between(4, 8))
+
+	// Force a config re-load
+	at.Do(5, func() { amc.Reload() })
+
+	at.Run()
+
+	t.Log(co.Check())
+}
