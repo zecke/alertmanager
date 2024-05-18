@@ -662,7 +662,6 @@ type DedupStage struct {
 	nflog NotificationLog
 	recv  *nflogpb.Receiver
 
-	now  func() time.Time
 	hash func(*types.Alert) uint64
 }
 
@@ -672,13 +671,8 @@ func NewDedupStage(rs ResolvedSender, l NotificationLog, recv *nflogpb.Receiver)
 		rs:    rs,
 		nflog: l,
 		recv:  recv,
-		now:   utcNow,
 		hash:  hashAlert,
 	}
-}
-
-func utcNow() time.Time {
-	return time.Now().UTC()
 }
 
 // Wrap a slice in a struct so we can store a pointer in sync.Pool.
@@ -745,7 +739,7 @@ func (n *DedupStage) needsUpdate(entry *nflogpb.Entry, firing, resolved map[uint
 	}
 
 	// Nothing changed, only notify if the repeat interval has passed.
-	return entry.Timestamp.Before(n.now().Add(-repeat))
+	return entry.DispatchTime.Before(dispatchTime.Add(-repeat))
 }
 
 // LastExecTime implements the Stage interface.
